@@ -3,21 +3,22 @@
 #include <unistd.h>     // socket 相关
 
 #include <iostream>
+#include <map>
 #include <thread>
-#include <vector>
 
-// 用于保存所有的客户端连接
-std::vector<int> clients;
+// 用户 id-name 映射
+std::map<int, std::string> user_map;
 
 /**
  * @brief 广播函数
  * 把一条消息发送给所有客户端（除了发送者）
+ * @param sender_fd 发送者（不需要被广播的 id）
  */
 void broadcast(const std::string& msg, int sender_fd) {
-  for (int client : clients) {
-    if (client != sender_fd) {
+  for (const auto& [fd, username] : user_map) {
+    if (fd != sender_fd) {
       // send: 向 socket 发送数据
-      send(client, msg.c_str(), msg.size(), 0);
+      send(fd, msg.c_str(), msg.size(), 0);
     }
   }
 }
@@ -28,24 +29,34 @@ void broadcast(const std::string& msg, int sender_fd) {
 void handle_client(int client_fd) {
   char buffer[1024];
 
+  // 1. 获取用户名，并加入用户表
+  int len = recv(client_fd, buffer, sizeof(buffer), 0);
+  if (len <= 0) {
+    close(client_fd);
+    return;
+  }
+  std::string username(buffer, len);
+  user_map[client_fd] = username;
+  std::cout << "用户上线：" << username << std::endl;
+  // 通知其他人
+  std::string join_msg = username + " 加入聊天室\n";
+  broadcast(join_msg, client_fd);
+
+  // 2. 聊天循环
   while (true) {
     // recv: 从 socket 中接收数据
     int len = recv(client_fd, buffer, sizeof(buffer), 0);
-
     // 如果客户端断开
-    if (len <= 0) {
-      std::cout << "客户端断开：" << client_fd << std::endl;
-      break;
-    }
-
+    if (len <= 0) break;
     // 把接收到的数据转成 string
     std::string msg(buffer, len);
-    std::cout << "收到：" << msg << std::endl;
-
+    // 拼接用户名+收到的信息
+    std::string full_msg = "[" + username + "]: " + msg;
+    std::cout << full_msg << std::endl;
     // 转发给其他客户端
-    broadcast(msg, client_fd);
+    broadcast(full_msg, client_fd);
   }
-
+  std::cout << username << " 离线\n";
   // 关闭连接
   close(client_fd);
 }
@@ -70,9 +81,7 @@ int main() {
     // 5. 等待客户端连接（阻塞）
     int client_fd = accept(server_fd, nullptr, nullptr);
     std::cout << "新客户端连接：" << client_fd << std::endl;
-    // 6. 保存客户端
-    clients.push_back(client_fd);
-    // 7. 为该客户端创建线程
+    // 6. 为该客户端创建线程
     std::thread t(handle_client, client_fd);
     // detach: 线程独立运行，不需要 join
     t.detach();
