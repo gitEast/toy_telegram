@@ -1,8 +1,30 @@
 #include "message.h"
 
+std::string message_type_to_string(MessageType type) {
+  switch (type) {
+    case MessageType::Login:
+      return "login";
+    case MessageType::Broadcast:
+      return "broadcast";
+    case MessageType::Private:
+      return "private";
+    case MessageType::System:
+      return "system";
+    default:
+      return "unknown";
+  }
+}
+MessageType string_to_message_type(const std::string& str) {
+  if (str == "login") return MessageType::Login;
+  if (str == "broadcast") return MessageType::Broadcast;
+  if (str == "private") return MessageType::Private;
+  if (str == "system") return MessageType::System;
+  return MessageType::Unknown;
+}
+
 std::string serialize(const Message& m) {
   std::string result = "{";
-  result += "\"type\":\"" + m.type + "\"";
+  result += "\"type\":\"" + message_type_to_string(m.type) + "\"";
   if (!m.username.empty()) {
     result += ",\"username\":\"" + m.username + "\"";
   }
@@ -29,7 +51,7 @@ std::string extract(const std::string& str, const std::string& key) {
 }
 Message deserialize(const std::string& str) {
   Message m;
-  m.type = extract(str, "type");
+  m.type = string_to_message_type(extract(str, "type"));
   m.username = extract(str, "username");
   m.msg = extract(str, "msg");
   return m;

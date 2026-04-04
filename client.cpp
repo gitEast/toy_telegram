@@ -26,8 +26,13 @@ void receive_msg(int sock) {
     while (framer.has_message()) {
       std::string one_msg = framer.next_message();
       Message m = deserialize(one_msg);
-      if (m.type.empty()) continue;
-      std::cout << "[" << m.username << "]: " << m.msg << std::endl;
+      // 广播 / 系统 信息
+      if (m.type == MessageType::Broadcast || m.type == MessageType::System) {
+        std::cout << "[" << m.username << "]: " << m.msg << std::endl;
+      } else if (m.type == MessageType::Private) {
+        std::cout << "[私聊]" << "[" << m.username << "]: " << m.msg
+                  << std::endl;
+      }
     }
   }
 }
@@ -48,7 +53,7 @@ int main() {
   std::string username;
   std::getline(std::cin, username);
   Message login_msg;
-  login_msg.type = "login";
+  login_msg.type = MessageType::Login;
   login_msg.username = username;
   std::string login_serialized = serialize(login_msg);
   send(sock, login_serialized.c_str(), login_serialized.size(), 0);
@@ -56,13 +61,26 @@ int main() {
   std::thread t(receive_msg, sock);
   t.detach();
   // 6. 主线程负责发送消息
-  Message chat_msg;
-  chat_msg.type = "chat";
-  chat_msg.username = "";
+  std::string input;
   while (true) {
-    std::getline(std::cin, chat_msg.msg);
-    std::string chat_serialized = serialize(chat_msg);
-    send(sock, chat_serialized.c_str(), chat_serialized.size(), 0);
+    std::getline(std::cin, input);
+    Message m;
+    // 判断 私聊 / 广播
+    if (input.rfind("/msg ", 0) == 0) {
+      m.type = MessageType::Private;
+      size_t first_space = input.find(' ', 5);
+      if (first_space == std::string::npos) {
+        std::cout << "格式错误：/msg 用户名 内容\n";
+        continue;
+      }
+      m.username = input.substr(5, first_space - 5);  // 私聊对象
+      m.msg = input.substr(first_space + 1);
+    } else {
+      m.type = MessageType::Broadcast;
+      m.msg = input;
+    }
+    std::string m_serialized = serialize(m);
+    send(sock, m_serialized.c_str(), m_serialized.size(), 0);
   }
   close(sock);
   return 0;

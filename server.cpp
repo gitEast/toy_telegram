@@ -49,8 +49,8 @@ void handle_client(int client_fd) {
       std::string one_msg = framer.next_message();
 
       Message m = deserialize(one_msg);
-      if (m.type.empty()) continue;
-      if (m.type != "login") {
+      if (m.type == MessageType::Unknown) continue;
+      if (m.type != MessageType::Login) {
         close(client_fd);
         return;
       }
@@ -58,7 +58,7 @@ void handle_client(int client_fd) {
       std::cout << "用户上线：" << m.username << std::endl;
       // 通知其他人
       Message join_msg;
-      join_msg.type = "chat";
+      join_msg.type = MessageType::System;
       join_msg.username = "system";
       join_msg.msg = m.username + " 加入聊天室";
       broadcast(serialize(join_msg), client_fd);
@@ -76,11 +76,34 @@ void handle_client(int client_fd) {
     if (framer.has_message()) {
       std::string one_msg = framer.next_message();
       Message m = deserialize(one_msg);
-      if (m.type != "chat") continue;
-      // 覆盖 username：server 不信任客户端 username
-      m.username = user_map[client_fd];
-      // 转发给其他客户端
-      broadcast(serialize(m), client_fd);
+      if (m.type == MessageType::Broadcast) {  // 广播
+        // 覆盖 username：server 不信任客户端 username
+        m.username = user_map[client_fd];
+        // 转发给其他客户端
+        broadcast(serialize(m), client_fd);
+      } else if (m.type == MessageType::Private) {  // 私聊
+        int target_fd = -1;                         // 私聊对象 fd
+        for (const auto& [fd, name] : user_map) {
+          if (name == m.username) {
+            target_fd = fd;
+            break;
+          }
+        }
+        if (target_fd != -1) {
+          // 更改 username 为发送者的 name
+          m.username = user_map[client_fd];
+          std::string m_serialized = serialize(m);
+          send(target_fd, m_serialized.c_str(), m_serialized.size(), 0);
+        } else {
+          // 用户不存在，向发送者报错
+          Message err;
+          err.type = MessageType::System;
+          err.username = "system";
+          err.msg = "用户不存在";
+          std::string err_serialized = serialize(err);
+          send(client_fd, err_serialized.c_str(), err_serialized.size(), 0);
+        }
+      }
     }
   }
 
@@ -88,7 +111,8 @@ void handle_client(int client_fd) {
   close(client_fd);
   // 通知用户离线
   Message leave_msg;
-  leave_msg.type = "chat", leave_msg.username = "system";
+  leave_msg.type = MessageType::System;
+  leave_msg.username = "system";
   leave_msg.msg = user_map[client_fd] + " 离开聊天室";
   broadcast(serialize(leave_msg), client_fd);
   std::cout << "用户离线：" << user_map[client_fd] << std::endl;

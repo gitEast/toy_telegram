@@ -3,12 +3,24 @@
 
 #include <string>
 
+/** 消息类型  */
+enum class MessageType { Login, Broadcast, Private, System, Unknown };
+
 /* 消息结构 */
 struct Message {
-  std::string type;
+  MessageType type;
   std::string username;
   std::string msg;
 };
+
+/**
+ * @brief MessageType 转换成对应字符串
+ */
+std::string message_type_to_string(MessageType type);
+/**
+ * @brief 字符串转换成对应 MessageType 枚举
+ */
+MessageType string_to_message_type(const std::string& str);
 
 /**
  * @brief 序列化（字符串拼接
