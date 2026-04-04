@@ -1,15 +1,19 @@
-// g++ -std=c++17 client.cpp -o client -pthread
-#include <arpa/inet.h>  // close
-#include <unistd.h>     // socket
+// g++ -std=c++17 client.cpp message.cpp framer.cpp -o client -pthread
+#include <arpa/inet.h>  // socket
+#include <unistd.h>     // close
 
 #include <iostream>
 #include <thread>
+
+#include "framer.h"
+#include "message.h"
 
 /**
  * @brief 专门负责“接收消息”的线程
  */
 void receive_msg(int sock) {
   char buffer[1024];
+  Framer framer;  // 消息分帧器
 
   while (true) {
     int len = recv(sock, buffer, sizeof(buffer), 0);
@@ -17,8 +21,14 @@ void receive_msg(int sock) {
       std::cout << "服务器断开连接\n";
       break;
     }
-    std::string msg(buffer, len);
-    std::cout << msg << std::endl;
+
+    framer.append(buffer, len);
+    while (framer.has_message()) {
+      std::string one_msg = framer.next_message();
+      Message m = deserialize(one_msg);
+      if (m.type.empty()) continue;
+      std::cout << "[" << m.username << "]: " << m.msg << std::endl;
+    }
   }
 }
 
@@ -34,18 +44,25 @@ int main() {
   // 3. 连接服务器
   connect(sock, (sockaddr*)&server_addr, sizeof(server_addr));
   // 4. 输入用户名
-  std::string username;
   std::cout << "请输入用户名：";
+  std::string username;
   std::getline(std::cin, username);
-  send(sock, username.c_str(), username.size(), 0);
+  Message login_msg;
+  login_msg.type = "login";
+  login_msg.username = username;
+  std::string login_serialized = serialize(login_msg);
+  send(sock, login_serialized.c_str(), login_serialized.size(), 0);
   // 5. 启动接收线程
   std::thread t(receive_msg, sock);
   t.detach();
   // 6. 主线程负责发送消息
-  std::string msg;
+  Message chat_msg;
+  chat_msg.type = "chat";
+  chat_msg.username = "";
   while (true) {
-    std::getline(std::cin, msg);
-    send(sock, msg.c_str(), msg.size(), 0);
+    std::getline(std::cin, chat_msg.msg);
+    std::string chat_serialized = serialize(chat_msg);
+    send(sock, chat_serialized.c_str(), chat_serialized.size(), 0);
   }
   close(sock);
   return 0;

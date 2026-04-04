@@ -1,11 +1,15 @@
-// g++ -std=c++17 server.cpp -o server -pthread
-#include <arpa/inet.h>  // close
-#include <unistd.h>     // socket 相关
+// g++ -std=c++17 server.cpp message.cpp framer.cpp -o server -pthread
+#include <arpa/inet.h>  // socket 相关
+#include <unistd.h>     // close
 
 #include <iostream>
 #include <map>
 #include <thread>
 
+#include "framer.h"
+#include "message.h"
+
+// TODO: user_map 线程不安全，需要加锁
 // 用户 id-name 映射
 std::map<int, std::string> user_map;
 
@@ -28,37 +32,68 @@ void broadcast(const std::string& msg, int sender_fd) {
  */
 void handle_client(int client_fd) {
   char buffer[1024];
+  Framer framer;
 
-  // 1. 获取用户名，并加入用户表
-  int len = recv(client_fd, buffer, sizeof(buffer), 0);
-  if (len <= 0) {
-    close(client_fd);
-    return;
-  }
-  std::string username(buffer, len);
-  user_map[client_fd] = username;
-  std::cout << "用户上线：" << username << std::endl;
-  // 通知其他人
-  std::string join_msg = username + " 加入聊天室\n";
-  broadcast(join_msg, client_fd);
-
-  // 2. 聊天循环
+  // 1. 登录阶段
   while (true) {
-    // recv: 从 socket 中接收数据
     int len = recv(client_fd, buffer, sizeof(buffer), 0);
-    // 如果客户端断开
-    if (len <= 0) break;
-    // 把接收到的数据转成 string
-    std::string msg(buffer, len);
-    // 拼接用户名+收到的信息
-    std::string full_msg = "[" + username + "]: " + msg;
-    std::cout << full_msg << std::endl;
-    // 转发给其他客户端
-    broadcast(full_msg, client_fd);
+    if (len <= 0) {
+      close(client_fd);  // 关闭连接
+      return;
+    }
+
+    framer.append(buffer, len);
+
+    size_t pos;
+    if (framer.has_message()) {
+      std::string one_msg = framer.next_message();
+
+      Message m = deserialize(one_msg);
+      if (m.type.empty()) continue;
+      if (m.type != "login") {
+        close(client_fd);
+        return;
+      }
+      user_map[client_fd] = m.username;
+      std::cout << "用户上线：" << m.username << std::endl;
+      // 通知其他人
+      Message join_msg;
+      join_msg.type = "chat";
+      join_msg.username = "system";
+      join_msg.msg = m.username + " 加入聊天室";
+      broadcast(serialize(join_msg), client_fd);
+      break;
+    }
   }
-  std::cout << username << " 离线\n";
+
+  // 2. 💬 聊天阶段
+  while (true) {
+    int len = recv(client_fd, buffer, sizeof(buffer), 0);
+    if (len <= 0) break;
+
+    framer.append(buffer, len);
+
+    if (framer.has_message()) {
+      std::string one_msg = framer.next_message();
+      Message m = deserialize(one_msg);
+      if (m.type != "chat") continue;
+      // 覆盖 username：server 不信任客户端 username
+      m.username = user_map[client_fd];
+      // 转发给其他客户端
+      broadcast(serialize(m), client_fd);
+    }
+  }
+
   // 关闭连接
   close(client_fd);
+  // 通知用户离线
+  Message leave_msg;
+  leave_msg.type = "chat", leave_msg.username = "system";
+  leave_msg.msg = user_map[client_fd] + " 离开聊天室";
+  broadcast(serialize(leave_msg), client_fd);
+  std::cout << "用户离线：" << user_map[client_fd] << std::endl;
+  // 用户表清除记录
+  user_map.erase(client_fd);
 }
 
 /**
