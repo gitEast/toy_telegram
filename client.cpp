@@ -30,7 +30,7 @@ void receive_msg(int sock) {
       if (m.type == MessageType::Broadcast || m.type == MessageType::System) {
         std::cout << "[" << m.username << "]: " << m.msg << std::endl;
       } else if (m.type == MessageType::Private) {
-        std::cout << "[私聊]" << "[" << m.username << "]: " << m.msg
+        std::cout << "[private]" << "[" << m.username << "]: " << m.msg
                   << std::endl;
       }
     }
@@ -65,8 +65,8 @@ int main() {
   while (true) {
     std::getline(std::cin, input);
     Message m;
-    // 判断 私聊 / 广播
-    if (input.rfind("/msg ", 0) == 0) {
+    // 判断 私聊 / 好友申请 / 好友申请回复 / 广播
+    if (input.rfind("/msg ", 0) == 0) {  // 私聊
       m.type = MessageType::Private;
       size_t first_space = input.find(' ', 5);
       if (first_space == std::string::npos) {
@@ -75,7 +75,24 @@ int main() {
       }
       m.username = input.substr(5, first_space - 5);  // 私聊对象
       m.msg = input.substr(first_space + 1);
-    } else {
+    } else if (input.rfind("/fri_add", 0) == 0) {  // 好友申请
+      // "/fri_add [username]"
+      m.type = MessageType::AddFriend;
+      size_t commandLen = std::strlen("/fri_add ");
+      m.username = input.substr(commandLen);      // 申请对象
+    } else if (input.rfind("/fri_ok", 0) == 0) {  // 好友申请同意
+      // "/fri_ok [username]"
+      m.type = MessageType::AddFriendReply;
+      size_t commandLen = std::strlen("/fri_ok ");
+      m.username = input.substr(commandLen);  // 申请对象
+      m.msg = "ok";
+    } else if (input.rfind("/fri_no", 0) == 0) {  // 好友申请拒绝
+      // "/fri_no [username]"
+      m.type = MessageType::AddFriendReply;
+      size_t commandLen = std::strlen("/fri_no ");
+      m.username = input.substr(commandLen);  // 申请对象
+      m.msg = "no";
+    } else {  // 广播
       m.type = MessageType::Broadcast;
       m.msg = input;
     }

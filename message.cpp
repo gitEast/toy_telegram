@@ -10,6 +10,10 @@ std::string message_type_to_string(MessageType type) {
       return "private";
     case MessageType::System:
       return "system";
+    case MessageType::AddFriend:
+      return "add_friend";
+    case MessageType::AddFriendReply:
+      return "add_friend_reply";
     default:
       return "unknown";
   }
@@ -19,6 +23,8 @@ MessageType string_to_message_type(const std::string& str) {
   if (str == "broadcast") return MessageType::Broadcast;
   if (str == "private") return MessageType::Private;
   if (str == "system") return MessageType::System;
+  if (str == "add_friend") return MessageType::AddFriend;
+  if (str == "add_friend_reply") return MessageType::AddFriendReply;
   return MessageType::Unknown;
 }
 

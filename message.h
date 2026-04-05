@@ -4,7 +4,15 @@
 #include <string>
 
 /** 消息类型  */
-enum class MessageType { Login, Broadcast, Private, System, Unknown };
+enum class MessageType {
+  Login,
+  Broadcast,
+  Private,
+  System,
+  AddFriend,       // 发送好友申请
+  AddFriendReply,  // 回复好友申请（同意/拒绝）
+  Unknown
+};
 
 /* 消息结构 */
 struct Message {

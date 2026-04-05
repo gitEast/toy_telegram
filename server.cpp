@@ -4,27 +4,54 @@
 
 #include <iostream>
 #include <map>
+#include <set>
 #include <thread>
 
 #include "framer.h"
 #include "message.h"
 
+#define FD_NOT_FOUND -1  // 没有 fd
+
 // TODO: user_map 线程不安全，需要加锁
 // 用户 id-name 映射
 std::map<int, std::string> user_map;
+// 好友关系映射 { A: {B, C}, B: {A} }
+std::map<std::string, std::set<std::string>> friends;
+// 好友申请（待处理）：friends_pending["B"] = {"A"} means B 收到 A 的好友申请
+std::map<std::string, std::set<std::string>> friends_pending;
+
+/**
+ * @brief 根据用户名寻找 fd
+ */
+int get_user_fd_by_name(const std::string& target_name) {
+  for (const auto& [fd, name] : user_map) {
+    if (name == target_name) {
+      return fd;
+    }
+  }
+  return FD_NOT_FOUND;
+}
 
 /**
  * @brief 广播函数
  * 把一条消息发送给所有客户端（除了发送者）
  * @param sender_fd 发送者（不需要被广播的 id）
  */
-void broadcast(const std::string& msg, int sender_fd) {
+void broadcast(const Message& m, int sender_fd) {
+  std::string m_serialized = serialize(m);
   for (const auto& [fd, username] : user_map) {
     if (fd != sender_fd) {
       // send: 向 socket 发送数据
-      send(fd, msg.c_str(), msg.size(), 0);
+      send(fd, m_serialized.c_str(), m_serialized.size(), 0);
     }
   }
+}
+/**
+ * @brief 单播
+ */
+void unicast(const Message& m, int sender_fd) {
+  std::string m_serialized = serialize(m);
+  send(sender_fd, m_serialized.c_str(), m_serialized.size(), 0);
 }
 
 /**
@@ -61,7 +88,7 @@ void handle_client(int client_fd) {
       join_msg.type = MessageType::System;
       join_msg.username = "system";
       join_msg.msg = m.username + " 加入聊天室";
-      broadcast(serialize(join_msg), client_fd);
+      broadcast(join_msg, client_fd);
       break;
     }
   }
@@ -80,28 +107,83 @@ void handle_client(int client_fd) {
         // 覆盖 username：server 不信任客户端 username
         m.username = user_map[client_fd];
         // 转发给其他客户端
-        broadcast(serialize(m), client_fd);
+        broadcast(m, client_fd);
       } else if (m.type == MessageType::Private) {  // 私聊
-        int target_fd = -1;                         // 私聊对象 fd
-        for (const auto& [fd, name] : user_map) {
-          if (name == m.username) {
-            target_fd = fd;
-            break;
+        std::string target_name = m.username;
+        std::string sender_name = user_map[client_fd];
+        int target_fd = get_user_fd_by_name(m.username);       // 私聊对象 fd
+        if (target_fd != FD_NOT_FOUND) {                       // 用户存在
+          if (friends[sender_name].count(target_name) != 0) {  // 存在好友关系
+            // 更改 username 为发送者的 name
+            m.username = user_map[client_fd];
+            unicast(m, target_fd);
+          } else {  // 不存在好友关系
+            unicast(Message{MessageType::System, "system",
+                            target_name + " 不是你的好友"},
+                    client_fd);
           }
+        } else {  // 用户不存在，向发送者报错
+          unicast(Message{MessageType::System, "system", "用户不存在"},
+                  client_fd);
         }
-        if (target_fd != -1) {
-          // 更改 username 为发送者的 name
-          m.username = user_map[client_fd];
-          std::string m_serialized = serialize(m);
-          send(target_fd, m_serialized.c_str(), m_serialized.size(), 0);
-        } else {
-          // 用户不存在，向发送者报错
-          Message err;
-          err.type = MessageType::System;
-          err.username = "system";
-          err.msg = "用户不存在";
-          std::string err_serialized = serialize(err);
-          send(client_fd, err_serialized.c_str(), err_serialized.size(), 0);
+      } else if (m.type == MessageType::AddFriend) {  // 好友申请
+        // { type: "add_friend", "username": receiver_name }
+        std::string sender_name = user_map[client_fd];
+        std::string target_name = m.username;
+        // 检查目标是否存在
+        int target_fd = get_user_fd_by_name(target_name);
+        if (target_fd != FD_NOT_FOUND) {  // 用户存在
+          /*
+           * 1. 加入好友申请
+           * 2. 通知接收者
+           */
+          friends_pending[target_name].insert(sender_name);
+          Message notify{MessageType::System, "system",
+                         sender_name + " 请求添加你为好友"};
+          unicast(notify, target_fd);
+        } else {  // 用户不存在
+          unicast(Message{MessageType::System, "system",
+                          "用户 " + target_name + " 不存在"},
+                  client_fd);
+        }
+      } else if (m.type == MessageType::AddFriendReply) {  // 回复好友申请
+        // { type: "add_friend_reply", username: requester_name, msg: "ok/no" }
+        std::string replier_name = user_map[client_fd];  // 好友申请回复方 name
+        std::string requester_name = m.username;         // 好友申请方 name
+        int requester_fd =
+            get_user_fd_by_name(requester_name);  // 好友申请方 fd
+
+        if (requester_fd != FD_NOT_FOUND) {  // 申请方存在
+          // 检查是否存在申请
+          if (friends_pending[replier_name].count(requester_name) != 0) {
+            if (m.msg == "ok") {  // 同意好友申请
+              // 建立双向好友关系
+              friends[requester_name].insert(replier_name);
+              friends[replier_name].insert(requester_name);
+              // 通知双方
+              unicast(Message{MessageType::System, "system",
+                              "你已和 " + replier_name + " 成为好友"},
+                      requester_fd);
+              unicast(Message{MessageType::System, "system",
+                              "你已和 " + requester_name + " 成为好友"},
+                      client_fd);
+            } else {  // 拒绝好友申请
+              // 通知申请方被拒
+              unicast(Message{MessageType::System, "system",
+                              replier_name + " 拒绝了你的好友申请"},
+                      requester_fd);
+            }
+            // 消除好友申请记录
+            friends_pending[replier_name].erase(requester_name);
+          } else {
+            unicast(Message{MessageType::System, "system",
+                            requester_name + " 并未向您发送好友申请"},
+                    client_fd);
+          }
+        } else {  // 申请方不存在
+          unicast(Message{MessageType::System, "system",
+                          "用户 " + requester_name + " 不存在"},
+                  client_fd);
         }
       }
     }
@@ -114,7 +196,7 @@ void handle_client(int client_fd) {
   leave_msg.type = MessageType::System;
   leave_msg.username = "system";
   leave_msg.msg = user_map[client_fd] + " 离开聊天室";
-  broadcast(serialize(leave_msg), client_fd);
+  broadcast(leave_msg, client_fd);
   std::cout << "用户离线：" << user_map[client_fd] << std::endl;
   // 用户表清除记录
   user_map.erase(client_fd);
