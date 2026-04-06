@@ -12,8 +12,7 @@
 # !.gitignore
 
 # 忽略具体的可执行文件
-server
-client
+/build
 
 # 忽略所有编译生成的中间目标文件
 *.o
