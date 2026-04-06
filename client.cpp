@@ -1,4 +1,3 @@
-// g++ -std=c++17 client.cpp message.cpp framer.cpp -o client -pthread
 #include <arpa/inet.h>  // socket
 #include <unistd.h>     // close
 
